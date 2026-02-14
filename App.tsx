@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { translateToASL } from './services/geminiService';
 import { TranslationResult, SignGloss } from './types';
@@ -7,7 +7,6 @@ import { COMMON_PHRASES } from './constants';
 import FingerspellingPlayer from './components/FingerspellingPlayer';
 import GestureAnimator from './components/GestureAnimator';
 
-// Manual Base64 encoding as strictly required by @google/genai guidelines
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -23,14 +22,24 @@ const App: React.FC = () => {
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [activeGlossIndex, setActiveGlossIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [error, setError] = useState<{ message: string; isTemporary: boolean } | null>(null);
+  const [error, setError] = useState<{ message: string; isTemporary: boolean; retryIn?: number } | null>(null);
   const [viewMode, setViewMode] = useState<'gesture' | 'fingerspell'>('gesture');
 
-  // Voice Recording State
   const [isListening, setIsListening] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<any>(null);
+
+  // Auto-clear countdown for temporary errors
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (error?.retryIn && error.retryIn > 0) {
+      timer = setInterval(() => {
+        setError(prev => prev ? { ...prev, retryIn: Math.max(0, (prev.retryIn || 0) - 1) } : null);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [error]);
 
   const handleTranslate = async (textToUse?: string) => {
     const text = textToUse || inputText;
@@ -44,18 +53,20 @@ const App: React.FC = () => {
 
     try {
       const translation = await translateToASL(text);
-      if (!translation.glosses || translation.glosses.length === 0) {
-        throw new Error("Linguistic data parsing failed.");
-      }
       setResult(translation);
     } catch (err: any) {
       console.error(err);
-      const isDemandIssue = err.message?.includes('503') || err.message?.includes('high demand') || err.message?.includes('UNAVAILABLE');
+      const isQuota = err.message?.includes('429') || err.message?.includes('quota');
+      const isBusy = err.message?.includes('503') || err.message?.includes('UNAVAILABLE');
+      
       setError({
-        message: isDemandIssue 
-          ? "The AI is currently processing many requests. Please wait a moment and try clicking Translate again."
-          : `Translation error: ${err.message || "Something went wrong."}`,
-        isTemporary: isDemandIssue
+        message: isQuota 
+          ? "Daily limit reached for this AI model. Free tier quotas are reset every 24 hours." 
+          : isBusy 
+            ? "The AI server is temporarily busy." 
+            : `Error: ${err.message || "Linguistic processing failed."}`,
+        isTemporary: isQuota || isBusy,
+        retryIn: isQuota ? 15 : undefined // Common cooldown for 429s
       });
     } finally {
       setIsTranslating(false);
@@ -109,45 +120,27 @@ const App: React.FC = () => {
             }
           },
           onerror: (e) => {
-            console.error("Live API Error:", e);
             stopVoiceInput();
-            setError({
-              message: "Voice service temporarily unavailable due to high demand. Please try again or use text input.",
-              isTemporary: true
-            });
+            setError({ message: "Voice session limit reached. Please use text input.", isTemporary: true });
           },
           onclose: () => setIsListening(false)
         },
         config: {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
-          systemInstruction: 'Transcribe the user speech perfectly. If they speak Hindi, transcribe it into Devanagari script.'
+          systemInstruction: 'Transcribe speech to text. Support Hindi Devanagari.'
         }
       });
-
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error("Failed to start voice input:", err);
-      setError({
-        message: "Microphone access denied or session failed to initialize.",
-        isTemporary: false
-      });
+      setError({ message: "Microphone access denied.", isTemporary: false });
     }
   };
 
   const stopVoiceInput = () => {
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    if (sessionRef.current) sessionRef.current.close();
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (audioContextRef.current) audioContextRef.current.close();
     setIsListening(false);
   };
 
@@ -173,7 +166,7 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black text-slate-800 tracking-tight">Gesture <span className="text-indigo-600">Talk</span></h1>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">ASL Multimodal Engine v3.1</span>
+            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">Flash Engine v3.2</span>
           </div>
         </div>
       </header>
@@ -207,10 +200,11 @@ const App: React.FC = () => {
               <div className="absolute bottom-4 right-4 flex gap-3">
                 <button
                   onClick={isListening ? stopVoiceInput : startVoiceInput}
+                  disabled={isTranslating}
                   className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all shadow-xl active:scale-90 ${
                     isListening 
                     ? 'bg-rose-500 text-white animate-pulse' 
-                    : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200'
+                    : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 disabled:opacity-50'
                   }`}
                   title="Voice Input"
                 >
@@ -251,21 +245,6 @@ const App: React.FC = () => {
             </div>
           </section>
 
-          {result && result.translatedEnglish && (
-            <div className="bg-indigo-600 text-white p-6 rounded-[2rem] shadow-lg flex items-center justify-between animate-in fade-in zoom-in">
-               <div className="flex items-center gap-4">
-                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                   <i className="fas fa-language"></i>
-                 </div>
-                 <div>
-                   <p className="text-[10px] font-black uppercase opacity-60">Source Bridge</p>
-                   <p className="text-lg font-bold">"{result.translatedEnglish}"</p>
-                 </div>
-               </div>
-               <div className="text-[10px] font-black border border-white/20 px-2 py-1 rounded uppercase tracking-tighter">Linguistic Processing</div>
-            </div>
-          )}
-
           {error && (
             <div className={`p-6 rounded-[2rem] border flex items-start gap-4 animate-in slide-in-from-top-4 ${
               error.isTemporary ? 'bg-amber-50 text-amber-800 border-amber-100' : 'bg-rose-50 text-rose-700 border-rose-100'
@@ -273,12 +252,23 @@ const App: React.FC = () => {
               <i className={`fas ${error.isTemporary ? 'fa-clock' : 'fa-exclamation-triangle'} mt-1`}></i>
               <div className="flex-grow">
                 <p className="font-bold">{error.message}</p>
-                {error.isTemporary && (
+                {error.retryIn !== undefined && error.retryIn > 0 && (
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="h-1.5 flex-grow bg-amber-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-amber-500 transition-all duration-1000" 
+                        style={{ width: `${(error.retryIn / 15) * 100}%` }}
+                      ></div>
+                    </div>
+                    <span className="text-[10px] font-black font-mono">RETRY IN {error.retryIn}S</span>
+                  </div>
+                )}
+                {error.isTemporary && (!error.retryIn || error.retryIn === 0) && (
                   <button 
                     onClick={() => handleTranslate()} 
                     className="mt-2 text-xs font-black uppercase tracking-widest bg-amber-200 px-3 py-1 rounded-lg hover:bg-amber-300 transition-colors"
                   >
-                    Try Again Now
+                    Try Again
                   </button>
                 )}
               </div>
@@ -413,24 +403,13 @@ const App: React.FC = () => {
                 </div>
               )}
             </section>
-
-            <div className="bg-slate-900 p-8 rounded-[3rem] text-white shadow-2xl relative overflow-hidden group border border-slate-800">
-               <div className="absolute -top-4 -right-4 w-24 h-24 bg-indigo-500/20 rounded-full blur-3xl"></div>
-              <h3 className="font-black text-lg mb-4 flex items-center gap-3">
-                <i className="fas fa-wave-square text-indigo-400"></i>
-                Gesture Intelligence
-              </h3>
-              <p className="text-slate-400 text-xs font-bold leading-relaxed uppercase tracking-wider">
-                Simulating HOLM parameters (Handshape, Orientation, Location, Movement) using high-precision ASL coordinate standards.
-              </p>
-            </div>
           </div>
         </div>
       </main>
       
       <footer className="py-12 border-t border-slate-100 mt-12 bg-white">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em]">Gesture Talk Multimodal Accessibility Engine</p>
+          <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em]">Gesture Talk Accessibility Engine</p>
         </div>
       </footer>
     </div>

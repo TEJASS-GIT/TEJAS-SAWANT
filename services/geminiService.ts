@@ -2,8 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { TranslationResult } from "../types";
 
-const MAX_RETRIES = 3;
-const INITIAL_DELAY = 1000; // 1 second
+const MAX_RETRIES = 2;
+const INITIAL_DELAY = 2000;
 
 async function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -14,30 +14,28 @@ export async function translateToASL(text: string, retryCount = 0): Promise<Tran
   
   try {
     const response = await ai.models.generateContent({
-      // Switching to Pro for better reasoning on complex linguistic transformations
-      model: "gemini-3-pro-preview",
-      contents: `You are an expert ASL (American Sign Language) linguist. 
-      Task: 
-      1. Detect if the input is in Devanagari script (e.g., Hindi). 
-      2. If it is Devanagari, translate it to English first.
-      3. Then, translate that English into authentic ASL Glosses.
-      4. For each gloss, provide a coordinated sequence of animation keyframes for BOTH hands (Left and Right) based on original ASL linguistic data.
+      // Flash has much higher quota limits than Pro on the free tier
+      model: "gemini-3-flash-preview",
+      contents: `Expert ASL Linguist Mode. 
+      Input: "${text}"
       
-      Linguistic Rules:
-      - Dominant hand (Right) performs active movements.
-      - Non-dominant hand (Left) provides support or mirroring for two-handed signs.
-      - If the sign is one-handed, the left hand stays at (x: -80, y: 50).
-      - Coordinates: (x, y) -100 to 100. (0,0) is center.
-      - Handshapes (Proxies): 'B' (flat), 'A' (fist), '5' (open), '1' (pointing).
+      Task:
+      1. If Devanagari (Hindi), translate to English first.
+      2. Convert English to ASL Gloss sequence.
+      3. Generate 2-hand coordinate animations (-100 to 100 range).
       
-      Input Text: "${text}"`,
+      ASL Linguistic Rules:
+      - Center is (0,0). Left resting is (-80, 50). Right resting is (80, 50).
+      - Use 'B', 'A', '5', '1', 'C', 'S' handshapes.
+      - Dominant hand (Right) moves more. Non-dominant (Left) supports.
+      - Output valid JSON matching the provided schema.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             originalText: { type: Type.STRING },
-            translatedEnglish: { type: Type.STRING, description: "The English translation if input was Devanagari" },
+            translatedEnglish: { type: Type.STRING },
             aslStructure: { type: Type.STRING },
             glosses: {
               type: Type.ARRAY,
@@ -100,12 +98,19 @@ export async function translateToASL(text: string, retryCount = 0): Promise<Tran
 
     return JSON.parse(jsonStr);
   } catch (error: any) {
-    // Handle 503 Service Unavailable or 429 Too Many Requests with exponential backoff
-    const isRetryable = error.message?.includes('503') || error.message?.includes('429') || error.message?.includes('UNAVAILABLE');
-    
-    if (isRetryable && retryCount < MAX_RETRIES) {
-      const delay = INITIAL_DELAY * Math.pow(2, retryCount);
-      console.warn(`Gemini API busy. Retrying in ${delay}ms... (Attempt ${retryCount + 1})`);
+    // Detect 429 (Quota) or 503 (Busy)
+    const isQuotaError = error.message?.includes('429') || error.message?.includes('quota');
+    const isBusyError = error.message?.includes('503') || error.message?.includes('UNAVAILABLE');
+
+    if ((isQuotaError || isBusyError) && retryCount < MAX_RETRIES) {
+      // Try to extract retryDelay from the error if available
+      let delay = INITIAL_DELAY * Math.pow(3, retryCount);
+      if (error.details?.[0]?.retryDelay) {
+        const seconds = parseInt(error.details[0].retryDelay);
+        if (!isNaN(seconds)) delay = (seconds + 1) * 1000;
+      }
+
+      console.warn(`API Limit reached. Retrying in ${delay}ms...`);
       await sleep(delay);
       return translateToASL(text, retryCount + 1);
     }
