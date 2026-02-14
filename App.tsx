@@ -7,7 +7,7 @@ import { COMMON_PHRASES } from './constants';
 import FingerspellingPlayer from './components/FingerspellingPlayer';
 import GestureAnimator from './components/GestureAnimator';
 
-// Manual Base64 encoding as per @google/genai guidelines
+// Manual Base64 encoding as strictly required by @google/genai guidelines
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -36,13 +36,6 @@ const App: React.FC = () => {
     const text = textToUse || inputText;
     if (!text.trim()) return;
 
-    // Safety check for API KEY in environment
-    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
-    if (!apiKey) {
-      setError("API Key not found. Please ensure the project environment variables are configured.");
-      return;
-    }
-
     setIsTranslating(true);
     setError(null);
     setResult(null);
@@ -55,26 +48,20 @@ const App: React.FC = () => {
         throw new Error("Linguistic data parsing failed.");
       }
       setResult(translation);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Unable to process linguistic gesture data. Check your connection or try a simpler phrase.");
+      setError(`Error: ${err.message || "Linguistic engine failed. Please try again."}`);
     } finally {
       setIsTranslating(false);
     }
   };
 
   const startVoiceInput = async () => {
-    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
-    if (!apiKey) {
-      setError("API Key required for voice translation.");
-      return;
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
 
@@ -112,13 +99,14 @@ const App: React.FC = () => {
             }
             if (message.serverContent?.turnComplete) {
               stopVoiceInput();
-              setTimeout(() => handleTranslate(), 200);
+              // Small timeout to allow state to settle
+              setTimeout(() => handleTranslate(), 300);
             }
           },
           onerror: (e) => {
             console.error("Live API Error:", e);
             stopVoiceInput();
-            setError("Voice service error occurred.");
+            setError("Voice service unavailable. Please check your API key and connection.");
           },
           onclose: () => setIsListening(false)
         },
@@ -132,7 +120,7 @@ const App: React.FC = () => {
       sessionRef.current = await sessionPromise;
     } catch (err) {
       console.error("Failed to start voice input:", err);
-      setError("Microphone access denied or session failed.");
+      setError("Microphone access denied or session failed to initialize.");
     }
   };
 
@@ -174,7 +162,7 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black text-slate-800 tracking-tight">Gesture <span className="text-indigo-600">Talk</span></h1>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">ASL v3.0 Deployment Ready</span>
+            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">ASL Multimodal Engine v3.1</span>
           </div>
         </div>
       </header>
@@ -198,7 +186,7 @@ const App: React.FC = () => {
             <div className="relative group">
               <textarea
                 className={`w-full h-48 p-6 bg-slate-50 rounded-3xl border-2 transition-all resize-none text-2xl text-slate-700 leading-tight font-medium outline-none ${
-                  isListening ? 'border-rose-400 bg-rose-50/30' : 'border-transparent focus:border-indigo-500 focus:bg-white'
+                  isListening ? 'border-rose-400 bg-rose-50/30 shadow-inner' : 'border-transparent focus:border-indigo-500 focus:bg-white'
                 }`}
                 placeholder="Type or click the mic to speak..."
                 value={inputText}
@@ -263,7 +251,7 @@ const App: React.FC = () => {
                    <p className="text-lg font-bold">"{result.translatedEnglish}"</p>
                  </div>
                </div>
-               <div className="text-[10px] font-black border border-white/20 px-2 py-1 rounded uppercase tracking-tighter">Devanagari Bridge</div>
+               <div className="text-[10px] font-black border border-white/20 px-2 py-1 rounded uppercase tracking-tighter">Linguistic Processing</div>
             </div>
           )}
 

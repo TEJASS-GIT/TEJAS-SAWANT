@@ -3,7 +3,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { TranslationResult } from "../types";
 
 export async function translateToASL(text: string): Promise<TranslationResult> {
+  // Always initialize right before use to ensure the most up-to-date environment config
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `You are an expert ASL (American Sign Language) linguist. 
@@ -83,5 +85,11 @@ export async function translateToASL(text: string): Promise<TranslationResult> {
     }
   });
 
-  return JSON.parse(response.text);
+  const rawText = response.text;
+  // Robust JSON extraction to handle potential markdown formatting from the model
+  const jsonStr = rawText.includes('```json') 
+    ? rawText.split('```json')[1].split('```')[0].trim() 
+    : rawText.trim();
+
+  return JSON.parse(jsonStr);
 }
