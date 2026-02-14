@@ -1,0 +1,7 @@
+{
+  "name": "GESTURE TALK",
+  "description": "An advanced text-to-ASL translator that uses Gemini AI for linguistic translation and high-fidelity gesture animations.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
