@@ -1,11 +1,21 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { translateToASL } from './services/geminiService';
 import { TranslationResult, SignGloss } from './types';
 import { COMMON_PHRASES } from './constants';
 import FingerspellingPlayer from './components/FingerspellingPlayer';
 import GestureAnimator from './components/GestureAnimator';
+
+// Manual Base64 encoding as per @google/genai guidelines
+function encode(bytes: Uint8Array) {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
 
 const App: React.FC = () => {
   const [inputText, setInputText] = useState('');
@@ -25,6 +35,13 @@ const App: React.FC = () => {
   const handleTranslate = async (textToUse?: string) => {
     const text = textToUse || inputText;
     if (!text.trim()) return;
+
+    // Safety check for API KEY in environment
+    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
+    if (!apiKey) {
+      setError("API Key not found. Please ensure the project environment variables are configured.");
+      return;
+    }
 
     setIsTranslating(true);
     setError(null);
@@ -47,11 +64,17 @@ const App: React.FC = () => {
   };
 
   const startVoiceInput = async () => {
+    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
+    if (!apiKey) {
+      setError("API Key required for voice translation.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
 
@@ -69,10 +92,12 @@ const App: React.FC = () => {
               for (let i = 0; i < inputData.length; i++) {
                 int16[i] = inputData[i] * 32768;
               }
-              const base64 = btoa(String.fromCharCode(...new Uint8Array(int16.buffer)));
+              const pcmData = new Uint8Array(int16.buffer);
+              const base64Data = encode(pcmData);
+              
               sessionPromise.then(session => {
                 session.sendRealtimeInput({ 
-                  media: { data: base64, mimeType: 'audio/pcm;rate=16000' } 
+                  media: { data: base64Data, mimeType: 'audio/pcm;rate=16000' } 
                 });
               });
             };
@@ -87,13 +112,13 @@ const App: React.FC = () => {
             }
             if (message.serverContent?.turnComplete) {
               stopVoiceInput();
-              // Trigger translation after a small delay to ensure state update
-              setTimeout(() => handleTranslate(), 100);
+              setTimeout(() => handleTranslate(), 200);
             }
           },
           onerror: (e) => {
             console.error("Live API Error:", e);
             stopVoiceInput();
+            setError("Voice service error occurred.");
           },
           onclose: () => setIsListening(false)
         },
@@ -107,7 +132,7 @@ const App: React.FC = () => {
       sessionRef.current = await sessionPromise;
     } catch (err) {
       console.error("Failed to start voice input:", err);
-      setError("Microphone access denied or Gemini Live API unavailable.");
+      setError("Microphone access denied or session failed.");
     }
   };
 
@@ -149,13 +174,12 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black text-slate-800 tracking-tight">Gesture <span className="text-indigo-600">Talk</span></h1>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">ASL v3.0 Voice Enabled</span>
+            <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded uppercase tracking-tighter">ASL v3.0 Deployment Ready</span>
           </div>
         </div>
       </header>
 
       <main className="flex-grow max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Input Column */}
         <div className="lg:col-span-7 space-y-6">
           <section className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden relative">
             <div className="flex items-center justify-between mb-4">
@@ -239,7 +263,7 @@ const App: React.FC = () => {
                    <p className="text-lg font-bold">"{result.translatedEnglish}"</p>
                  </div>
                </div>
-               <div className="text-[10px] font-black border border-white/20 px-2 py-1 rounded uppercase">Linguistic Processing</div>
+               <div className="text-[10px] font-black border border-white/20 px-2 py-1 rounded uppercase tracking-tighter">Devanagari Bridge</div>
             </div>
           )}
 
@@ -292,7 +316,6 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Visualizer Column */}
         <div className="lg:col-span-5">
           <div className="sticky top-24 space-y-6">
             <section className="bg-white p-8 rounded-[3rem] shadow-2xl border border-slate-200">
@@ -387,7 +410,7 @@ const App: React.FC = () => {
                 Gesture Intelligence
               </h3>
               <p className="text-slate-400 text-xs font-bold leading-relaxed uppercase tracking-wider">
-                Our dual-hand engine simulates the HOLM parameters (Handshape, Orientation, Location, Movement) of American Sign Language using high-precision 2D coordinates.
+                Simulating HOLM parameters (Handshape, Orientation, Location, Movement) using high-precision ASL coordinate standards.
               </p>
             </div>
           </div>
