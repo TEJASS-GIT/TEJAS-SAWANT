@@ -23,7 +23,7 @@ const App: React.FC = () => {
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [activeGlossIndex, setActiveGlossIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; isTemporary: boolean } | null>(null);
   const [viewMode, setViewMode] = useState<'gesture' | 'fingerspell'>('gesture');
 
   // Voice Recording State
@@ -50,7 +50,13 @@ const App: React.FC = () => {
       setResult(translation);
     } catch (err: any) {
       console.error(err);
-      setError(`Error: ${err.message || "Linguistic engine failed. Please try again."}`);
+      const isDemandIssue = err.message?.includes('503') || err.message?.includes('high demand') || err.message?.includes('UNAVAILABLE');
+      setError({
+        message: isDemandIssue 
+          ? "The AI is currently processing many requests. Please wait a moment and try clicking Translate again."
+          : `Translation error: ${err.message || "Something went wrong."}`,
+        isTemporary: isDemandIssue
+      });
     } finally {
       setIsTranslating(false);
     }
@@ -99,14 +105,16 @@ const App: React.FC = () => {
             }
             if (message.serverContent?.turnComplete) {
               stopVoiceInput();
-              // Small timeout to allow state to settle
               setTimeout(() => handleTranslate(), 300);
             }
           },
           onerror: (e) => {
             console.error("Live API Error:", e);
             stopVoiceInput();
-            setError("Voice service unavailable. Please check your API key and connection.");
+            setError({
+              message: "Voice service temporarily unavailable due to high demand. Please try again or use text input.",
+              isTemporary: true
+            });
           },
           onclose: () => setIsListening(false)
         },
@@ -120,7 +128,10 @@ const App: React.FC = () => {
       sessionRef.current = await sessionPromise;
     } catch (err) {
       console.error("Failed to start voice input:", err);
-      setError("Microphone access denied or session failed to initialize.");
+      setError({
+        message: "Microphone access denied or session failed to initialize.",
+        isTemporary: false
+      });
     }
   };
 
@@ -256,9 +267,21 @@ const App: React.FC = () => {
           )}
 
           {error && (
-            <div className="bg-rose-50 text-rose-700 p-6 rounded-[2rem] border border-rose-100 flex items-start gap-4 animate-in slide-in-from-top-4">
-              <i className="fas fa-exclamation-triangle mt-1"></i>
-              <p className="font-bold">{error}</p>
+            <div className={`p-6 rounded-[2rem] border flex items-start gap-4 animate-in slide-in-from-top-4 ${
+              error.isTemporary ? 'bg-amber-50 text-amber-800 border-amber-100' : 'bg-rose-50 text-rose-700 border-rose-100'
+            }`}>
+              <i className={`fas ${error.isTemporary ? 'fa-clock' : 'fa-exclamation-triangle'} mt-1`}></i>
+              <div className="flex-grow">
+                <p className="font-bold">{error.message}</p>
+                {error.isTemporary && (
+                  <button 
+                    onClick={() => handleTranslate()} 
+                    className="mt-2 text-xs font-black uppercase tracking-widest bg-amber-200 px-3 py-1 rounded-lg hover:bg-amber-300 transition-colors"
+                  >
+                    Try Again Now
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
